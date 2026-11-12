@@ -178,7 +178,7 @@ button:active,[data-act]:not(#modal):active{opacity:.55;transform:scale(.96)}
 
 <script>
 'use strict';
-const VER='0.2';
+const VER='1.3';
 const KEY='ritmo.v1';
 
 /* ---------- utilità ---------- */
@@ -202,6 +202,15 @@ const num=v=>{const n=parseFloat(String(v).replace(',','.'));return isFinite(n)?
 function fresh(){return{v:1,onboarded:false,profile:{sex:'m',age:25,weight:70,height:175},goals:{move:400,exercise:30,stand:12},aim:{type:'maintain',delta:300},sync:{url:'',key:''},standManual:true,pantry:[],theme:'auto',meals:[],acts:[],health:{},custom:[],recent:[],off:{},lastSync:0}}
 function load(){try{const s=JSON.parse(localStorage.getItem(KEY));if(s&&s.v===1)return Object.assign(fresh(),s)}catch(e){}return fresh()}
 let S=load();
+(function migrate(){
+  const seen=new Set();let ch=false;
+  S.pantry=(S.pantry||[]).map(x=>{
+    const m=/^(Pasta di semola|Riso) \((a crudo|cotta|cotto)\)$/.exec(x.n||'');
+    if(m&&!x.pair){ch=true;return Object.assign({},x,{n:m[1],pair:1,v:m[2]==='a crudo'?0:1})}
+    return x;
+  }).filter(x=>{if(!x.pair)return true;if(seen.has(x.n)){ch=true;return false}seen.add(x.n);return true});
+  if(ch)save();
+})();
 function save(){try{localStorage.setItem(KEY,JSON.stringify(S))}catch(e){}}
 let view={tab:'today',date:todayS(),range:14};
 
@@ -339,8 +348,11 @@ const DB=RAW.map(a=>({e:a[0],n:a[1],k:a[2],p:a[3],c:a[4],f:a[5],pg:a[6],pl:a[7]}
 });
 const fname=f=>f.vl?f.n+' ('+f.vl+')':f.n;
 const dname=f=>f.alt?f.n:fname(f);
+const crudeOf=n=>DB.find(d=>d.n===n&&d.alt);
+const pname=x=>x.pair?x.n+' ('+(x.v?crudeOf(x.n).alt.vl:'a crudo')+')':x.n;
 const inPantry=n=>S.pantry.some(x=>x.n===n);
-const pantryItem=f=>({n:fname(f),e:f.e,k:f.k,p:f.p,c:f.c,f:f.f,pg:f.pg,pl:f.pl});
+const pantryItem=f=>{const c=f.alt?f:f.base;return c?{n:c.n,e:f.e,pair:1,v:f===c?0:1,k:f.k,p:f.p,c:f.c,f:f.f,pg:f.pg,pl:f.pl}:{n:fname(f),e:f.e,k:f.k,p:f.p,c:f.c,f:f.f,pg:f.pg,pl:f.pl}};
+const pantryFood=x=>{if(x.pair){const c=crudeOf(x.n);return x.v?c.alt:c}return x};
 const ACTS=[['🚶','Camminata',3.5],['🚶‍♂️','Camminata veloce',4.8],['🏃','Corsa',9.8],['🚴','Bici',7.5],['🏊','Nuoto',7],['🏋️','Pesi / palestra',5],['🧘','Yoga / stretching',2.5],['🔥','HIIT / circuito',8],['⚽','Calcio',7],['🎾','Tennis / padel',7],['🥾','Escursione',6],['💃','Ballo',5],['🧹','Lavori di casa',3.3]];
 const SLOTS=['Colazione','Pranzo','Spuntino','Cena'];
 const slotNow=()=>{const h=new Date().getHours()+new Date().getMinutes()/60;return h<10.5?'Colazione':h<15.5?'Pranzo':h<18?'Spuntino':'Cena'};
@@ -509,7 +521,7 @@ function vPantry(){
     o+=`<section class="card"><div class="empty">La dispensa è la tua lista di alimenti di tutti i giorni, con la quantità che mangi di solito. Un tocco e lo registri.</div><button class="btn" data-act="pan-add">Scegli i tuoi alimenti</button></section>`;
   }else{
     o+=`<section class="card">`;
-    S.pantry.forEach((f,i)=>{o+=`<div class="row" data-act="pan-use" data-i="${i}"><div class="em">${f.e}</div><div class="tx"><b>${esc(f.n)}</b><small>${esc(f.pl)} · ${fmt(f.pg)} g</small></div><div class="kc">${fmt(f.k*f.pg/100)} <small>kcal</small></div><button class="x" data-act="pan-edit" data-i="${i}" aria-label="Modifica">✎</button></div>`});
+    S.pantry.forEach((f,i)=>{o+=`<div class="row" data-act="pan-use" data-i="${i}"><div class="em">${f.e}</div><div class="tx"><b>${esc(f.n)}</b><small>${f.pair?(f.v?crudeOf(f.n).alt.vl:'a crudo')+' · ':''}${esc(f.pl)} · ${fmt(f.pg)} g</small></div><div class="kc">${fmt(f.k*f.pg/100)} <small>kcal</small></div><button class="x" data-act="pan-edit" data-i="${i}" aria-label="Modifica">✎</button></div>`});
     o+=`</section><div class="hint" style="margin-top:0">✎ cambia la quantità o toglie l'alimento. Per salvare una quantità diversa, aggiungi un pasto e tocca «Salva in Dispensa».</div>`;
   }
   return o;
@@ -542,7 +554,7 @@ function search(q){
   const all=allFoods().filter(f=>!f.hide);q=norm(q).trim();
   if(!q){
     const seen=new Set(),out=[];
-    S.pantry.concat(S.recent.map(n=>allFoods().find(f=>fname(f)===n)).filter(Boolean)).forEach(f=>{const k=fname(f);if(!seen.has(k)){seen.add(k);out.push(f)}});
+    S.pantry.map(x=>{const f=pantryFood(x);return f.base||f}).concat(S.recent.map(n=>{const f=allFoods().find(f=>fname(f)===n);return f&&f.base?f.base:f}).filter(Boolean)).forEach(f=>{const k=dname(f);if(!seen.has(k)){seen.add(k);out.push(f)}});
     return out.length?out:all.slice(0,25);
   }
   const words=q.split(/\s+/);
@@ -619,20 +631,20 @@ let PCUR=[],PE=null;
 function panList(q){
   q=q.trim();
   const base=q?search(q):DB.filter(f=>!f.hide).slice(0,30);
-  const out=[];base.forEach(f=>{out.push(f);if(f.alt)out.push(f.alt)});
-  return out;
+  return base.filter(f=>!f.hide);
 }
 function panResHTML(q){
   PCUR=panList(q);
   if(!PCUR.length)return `<div class="empty">Nessun risultato per «${esc(q)}».<br>Puoi crearlo con «Nuovo alimento».</div>`;
-  return PCUR.map((f,i)=>{const on=inPantry(fname(f));return `<div class="row" data-act="pan-toggle" data-i="${i}"><div class="em">${f.e}</div><div class="tx"><b>${esc(fname(f))}</b><small>${fmt(f.k)} kcal/100 g · ${f.pl} ${fmt(f.pg)} g</small></div><div class="kc ${on?'ok':'mut'}" style="font-size:22px">${on?'✓':'+'}</div></div>`}).join('');
+  return PCUR.map((f,i)=>{const on=inPantry(dname(f));return `<div class="row" data-act="pan-toggle" data-i="${i}"><div class="em">${f.e}</div><div class="tx"><b>${esc(dname(f))}</b><small>${f.alt?'a crudo o '+f.alt.vl+' · ':''}${fmt(f.k)} kcal/100 g · ${f.pl} ${fmt(f.pg)} g</small></div><div class="kc ${on?'ok':'mut'}" style="font-size:22px">${on?'✓':'+'}</div></div>`}).join('');
 }
 function panAddSheet(){
   setSheet('Aggiungi alla Dispensa',`<div class="srch"><input id="pq" placeholder="Cerca alimento…" autocomplete="off" autocorrect="off"></div><div class="res" id="pres">${panResHTML('')}</div><div class="lnk"><button class="link" data-act="pan-new">Nuovo alimento</button></div>`);
 }
 function panEditSheet(i){
   const f=S.pantry[i];if(!f)return;PE={i,g:f.pg};
-  setSheet(esc(f.n),`<div class="mut" style="font-size:13px;margin-bottom:6px">${fmt(f.k)} kcal/100 g</div>
+  const pv=f.pair?`<div class="seg" style="margin-bottom:10px"><button class="${f.v?'':'on'}" data-act="pan-var" data-v="0">A crudo</button><button class="${f.v?'on':''}" data-act="pan-var" data-v="1">${cap(crudeOf(f.n).alt.vl)}</button></div>`:'';
+  setSheet(esc(f.n),pv+`<div class="mut" style="font-size:13px;margin-bottom:6px">${fmt(f.k)} kcal/100 g</div>
   <div class="fld"><label>Quantità abituale (g)</label><input id="pe-g" type="number" inputmode="decimal" value="${f.pg}"></div>
   <div class="prev"><div class="n" id="pe-k">${fmt(f.k*f.pg/100)}<small> kcal</small></div></div>
   <button class="btn" data-act="pan-edit-ok">Salva</button><button class="btn del" data-act="pan-del">Togli dalla Dispensa</button>`);
@@ -841,7 +853,7 @@ const ACT={
     const g=num($('#gr').value),f=ADD.f;if(!(g>0)){toast('Inserisci una quantità');return}
     const it=pantryItem(f);it.pg=g;it.pl='tua porzione';
     S.pantry=S.pantry.filter(x=>x.n!==it.n);S.pantry.unshift(it);save();render();
-    toast('★ Salvato in Dispensa: '+esc(it.n)+' · '+fmt(g)+' g');
+    toast('★ Salvato in Dispensa: '+esc(pname(it))+' · '+fmt(g)+' g');
   },
   mult(el){ADD.g=Math.round(ADD.f.pg*+el.dataset.m*10)/10;$('#gr').value=ADD.g;updPrev()},
   slot(el){ADD.slot=el.dataset.s;document.querySelectorAll('[data-act=slot]').forEach(b=>b.classList.toggle('on',b===el))},
@@ -890,19 +902,23 @@ const ACT={
   'pan-add'(){panAddSheet()},
   'pan-new'(){newFoodSheet('',true)},
   'pan-toggle'(el){
-    const f=PCUR[+el.dataset.i];if(!f)return;const n=fname(f);
+    const f=PCUR[+el.dataset.i];if(!f)return;const n=dname(f);
     if(inPantry(n))S.pantry=S.pantry.filter(x=>x.n!==n);else S.pantry.push(pantryItem(f));
     save();const q=($('#pq')||{value:''}).value;$('#pres').innerHTML=panResHTML(q);render();
   },
   'pan-use'(el){
     const f=S.pantry[+el.dataset.i];if(!f)return;
     const id=uid();flashId=id;
-    S.meals.push({id,d:view.date,t:hhmm(),slot:slotNow(),n:f.n,e:f.e,g:f.pg,k:f.k,p:f.p,c:f.c,f:f.f,pl:f.pl});
-    S.recent=[f.n].concat(S.recent.filter(x=>x!==f.n)).slice(0,10);save();
+    S.meals.push({id,d:view.date,t:hhmm(),slot:slotNow(),n:pname(f),e:f.e,g:f.pg,k:f.k,p:f.p,c:f.c,f:f.f,pl:f.pl});
+    S.recent=[pname(f)].concat(S.recent.filter(x=>x!==pname(f))).slice(0,10);save();
     el.classList.remove('flash');void el.offsetWidth;el.classList.add('flash');
-    toast('Aggiunto a '+dayTitle(view.date).toLowerCase()+': '+esc(f.n)+' · '+fmt(f.k*f.pg/100)+' kcal','Annulla',()=>{S.meals=S.meals.filter(m=>m.id!==id);save();render()});
+    toast('Aggiunto a '+dayTitle(view.date).toLowerCase()+': '+esc(pname(f))+' · '+fmt(f.k*f.pg/100)+' kcal','Annulla',()=>{S.meals=S.meals.filter(m=>m.id!==id);save();render()});
   },
   'pan-edit'(el){panEditSheet(+el.dataset.i)},
+  'pan-var'(el){
+    const x=S.pantry[PE.i],c=crudeOf(x.n),f=el.dataset.v==='0'?c:c.alt;
+    Object.assign(x,{v:+el.dataset.v,k:f.k,p:f.p,c:f.c,f:f.f,pg:f.pg,pl:f.pl});save();panEditSheet(PE.i);render();
+  },
   'pan-edit-ok'(){const g=num($('#pe-g').value);if(!(g>0)){toast('Inserisci una quantità');return}const f=S.pantry[PE.i];f.pg=g;f.pl='tua porzione';save();closeModal();render();toast('Quantità salvata')},
   'pan-del'(){const f=S.pantry[PE.i];S.pantry.splice(PE.i,1);save();closeModal();render();toast('Tolto dalla Dispensa','Annulla',()=>{S.pantry.splice(Math.min(PE.i,S.pantry.length),0,f);save();render()})},
   'add-act'(){AC={i:0,m:30,k:0,touched:false};AC.k=actKcal();actSheet()},
